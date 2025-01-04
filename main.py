@@ -18,22 +18,37 @@ class EditDialog(tk.Toplevel):
         self.transient(parent)
         self.grab_set()
 
-        # Create scrollable frame
-        container = ttk.Frame(self)
-        container.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        # Configure dialog size and position
+        self.geometry("500x600")  # Set initial size
 
-        canvas = tk.Canvas(container)
-        scrollbar = ttk.Scrollbar(container, orient="horizontal", command=canvas.xview)
+        # Create main container
+        main_frame = ttk.Frame(self, padding="10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Create canvas with scrollbar for vertical scrolling
+        canvas = tk.Canvas(main_frame)
+        scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
+
+        # Create frame for edit widgets
         self.edit_frame = ttk.Frame(canvas)
+        self.edit_frame.columnconfigure(1, weight=1)  # Make entry column expandable
 
-        canvas.configure(xscrollcommand=scrollbar.set)
+        # Configure canvas
+        canvas.configure(yscrollcommand=scrollbar.set)
 
-        # Create edit widgets
+        # Create edit widgets - vertical layout
         self.edit_widgets = {}
         for idx, col in enumerate(visible_columns):
-            ttk.Label(self.edit_frame, text=col).grid(row=0, column=idx, padx=5)
-            entry = ttk.Entry(self.edit_frame, width=20)
-            entry.grid(row=1, column=idx, padx=5)
+            # Label (Column name)
+            ttk.Label(self.edit_frame, text=col, anchor="e").grid(
+                row=idx, column=0, padx=(0, 10), pady=5, sticky="e"
+            )
+
+            # Entry widget
+            entry = ttk.Entry(self.edit_frame)
+            entry.grid(row=idx, column=1, pady=5, sticky="ew", padx=(0, 10))
+
+            # Get and format value
             value = df.iloc[row_idx][col]
             if isinstance(value, (np.ndarray, list)):
                 if isinstance(value, np.ndarray):
@@ -48,23 +63,38 @@ class EditDialog(tk.Toplevel):
         # Put the edit frame in the canvas
         canvas.create_window((0, 0), window=self.edit_frame, anchor="nw")
 
-        # Layout
-        canvas.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-        scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
+        # Layout scrollable area
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
         # Update scroll region when widgets are configured
         self.edit_frame.bind("<Configure>",
                              lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
 
-        # Buttons
+        # Buttons at the bottom
         button_frame = ttk.Frame(self)
-        button_frame.pack(pady=10)
-        ttk.Button(button_frame, text="Save", command=self.save).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="Cancel", command=self.cancel).pack(side=tk.LEFT, padx=5)
+        button_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=10)
+        ttk.Button(button_frame, text="Save", command=self.save).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(button_frame, text="Cancel", command=self.cancel).pack(side=tk.RIGHT, padx=5)
 
         # Center the dialog
         self.geometry("+%d+%d" % (parent.winfo_rootx() + 50,
                                   parent.winfo_rooty() + 50))
+
+        # Make sure edit frame uses full width
+        self.edit_frame.bind("<Configure>", self._on_frame_configure)
+        canvas.bind("<Configure>", self._on_canvas_configure)
+
+    def _on_frame_configure(self, event=None):
+        """Reset the scroll region to encompass the inner frame"""
+        self.edit_frame.master.configure(scrollregion=self.edit_frame.master.bbox("all"))
+
+    def _on_canvas_configure(self, event):
+        """When canvas is resized, resize the inner frame to match"""
+        self.edit_frame.master.itemconfig(
+            self.edit_frame.master.find_withtag("all")[0],
+            width=event.width
+        )
 
     def save(self):
         self.result = {}
