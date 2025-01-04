@@ -1,9 +1,47 @@
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
+
+import numpy as np
+import pandas as pd
 import pyarrow
 import pyarrow.orc as orc
-import pandas as pd
-import numpy as np
+
+
+class ScrolledFrame(ttk.Frame):
+    """A scrollable frame widget"""
+
+    def __init__(self, container, *args, **kwargs):
+        super().__init__(container, *args, **kwargs)
+
+        # Create a canvas and scrollbar
+        self.canvas = tk.Canvas(self)
+        self.scrollbar = ttk.Scrollbar(self, orient="horizontal", command=self.canvas.xview)
+        self.scrollable_frame = ttk.Frame(self.canvas)
+
+        # Configure canvas
+        self.canvas.configure(xscrollcommand=self.scrollbar.set)
+
+        # Track changes to the canvas and frame size and sync them
+        self.scrollable_frame.bind("<Configure>", self._on_frame_configure)
+        self.canvas.bind("<Configure>", self._on_canvas_configure)
+
+        # Put the frame in the canvas
+        self.canvas_frame = self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
+
+        # Layout
+        self.canvas.grid(row=0, column=0, sticky="ew")
+        self.scrollbar.grid(row=1, column=0, sticky="ew")
+
+        # Expand canvas to fill frame
+        self.grid_columnconfigure(0, weight=1)
+
+    def _on_frame_configure(self, event=None):
+        """Reset the scroll region to encompass the inner frame"""
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+    def _on_canvas_configure(self, event):
+        """When canvas is resized, resize the inner frame to match"""
+        self.canvas.itemconfig(self.canvas_frame, width=event.width)
 
 
 class ORCEditor:
@@ -13,9 +51,15 @@ class ORCEditor:
         self.current_file = None
         self.df = None
 
+        # Make the window responsive
+        self.root.grid_rowconfigure(0, weight=1)
+        self.root.grid_columnconfigure(0, weight=1)
+
         # Create main container
-        self.main_frame = ttk.Frame(root, padding="10")
-        self.main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        self.main_frame = ttk.Frame(root)
+        self.main_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+        self.main_frame.grid_rowconfigure(1, weight=1)
+        self.main_frame.grid_columnconfigure(0, weight=1)
 
         # File operations buttons
         self.create_file_buttons()
@@ -23,7 +67,7 @@ class ORCEditor:
         # Table view
         self.create_table_view()
 
-        # Edit controls
+        # Scrollable edit controls
         self.create_edit_controls()
 
     def create_file_buttons(self):
@@ -34,33 +78,46 @@ class ORCEditor:
         ttk.Button(file_frame, text="Save ORC", command=self.save_file).grid(row=0, column=1, padx=5)
 
     def create_table_view(self):
-        # Create Treeview
-        self.tree = ttk.Treeview(self.main_frame)
-        self.tree.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S))
+        # Create frame for treeview
+        tree_frame = ttk.Frame(self.main_frame)
+        tree_frame.grid(row=1, column=0, sticky="nsew")
+        tree_frame.grid_rowconfigure(0, weight=1)
+        tree_frame.grid_columnconfigure(0, weight=1)
 
-        # Add scrollbars
-        vsb = ttk.Scrollbar(self.main_frame, orient="vertical", command=self.tree.yview)
-        hsb = ttk.Scrollbar(self.main_frame, orient="horizontal", command=self.tree.xview)
+        # Create Treeview with scrollbars
+        self.tree = ttk.Treeview(tree_frame)
+        vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
+        hsb = ttk.Scrollbar(tree_frame, orient="horizontal", command=self.tree.xview)
         self.tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
 
-        # Grid scrollbars
-        vsb.grid(row=1, column=2, sticky=(tk.N, tk.S))
-        hsb.grid(row=2, column=0, columnspan=2, sticky=(tk.W, tk.E))
+        # Grid scrollbars and treeview
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        vsb.grid(row=0, column=1, sticky="ns")
+        hsb.grid(row=1, column=0, sticky="ew")
 
         # Configure tree selection
         self.tree.bind('<<TreeviewSelect>>', self.on_select)
 
     def create_edit_controls(self):
+        # Create a frame for edit controls with scrolling
         edit_frame = ttk.LabelFrame(self.main_frame, text="Edit Row", padding="5")
-        edit_frame.grid(row=3, column=0, columnspan=2, pady=10, sticky=(tk.W, tk.E))
+        edit_frame.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+
+        # Create scrollable frame for edit controls
+        self.edit_scroll_frame = ScrolledFrame(edit_frame)
+        self.edit_scroll_frame.grid(row=0, column=0, sticky="ew")
+        edit_frame.grid_columnconfigure(0, weight=1)
 
         self.edit_widgets = {}
-        self.edit_row = ttk.Frame(edit_frame)
+        self.edit_row = ttk.Frame(self.edit_scroll_frame.scrollable_frame)
         self.edit_row.grid(row=0, column=0)
 
-        ttk.Button(edit_frame, text="Update Row", command=self.update_row).grid(row=1, column=0, pady=5)
-        ttk.Button(edit_frame, text="Add Row", command=self.add_row).grid(row=1, column=1, pady=5)
-        ttk.Button(edit_frame, text="Delete Row", command=self.delete_row).grid(row=1, column=2, pady=5)
+        # Buttons frame
+        button_frame = ttk.Frame(edit_frame)
+        button_frame.grid(row=1, column=0, pady=5)
+
+        ttk.Button(button_frame, text="Update Row", command=self.update_row).grid(row=0, column=0, padx=5)
+        ttk.Button(button_frame, text="Delete Row", command=self.delete_row).grid(row=0, column=1, padx=5)
 
     def open_file(self):
         filename = filedialog.askopenfilename(
