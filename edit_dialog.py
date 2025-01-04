@@ -4,6 +4,8 @@ from tkinter import ttk, messagebox
 import numpy as np
 import pandas as pd
 
+from utils import get_spark_type
+
 
 class EditDialog(tk.Toplevel):
     def __init__(self, parent, df, row_idx, visible_columns):
@@ -18,7 +20,7 @@ class EditDialog(tk.Toplevel):
         self.grab_set()
 
         # Configure dialog size and position
-        self.geometry("500x600")  # Set initial size
+        self.geometry("700x600")  # Increased width to accommodate spark type information
 
         # Create main container
         main_frame = ttk.Frame(self, padding="10")
@@ -30,7 +32,7 @@ class EditDialog(tk.Toplevel):
 
         # Create frame for edit widgets
         self.edit_frame = ttk.Frame(canvas)
-        self.edit_frame.columnconfigure(1, weight=1)  # Make entry column expandable
+        self.edit_frame.columnconfigure(2, weight=1)  # Make entry column expandable
 
         # Configure canvas
         canvas.configure(yscrollcommand=scrollbar.set)
@@ -43,9 +45,15 @@ class EditDialog(tk.Toplevel):
                 row=idx, column=0, padx=(0, 10), pady=5, sticky="e"
             )
 
+            # Type information label
+            sample_value = self.df.iloc[0][col]  # Get a sample value to help determine array types
+            spark_type = get_spark_type(self.df[col].dtype, sample_value)
+            type_label = ttk.Label(self.edit_frame, text=f"({spark_type})", foreground="gray")
+            type_label.grid(row=idx, column=1, padx=(0, 10), pady=5, sticky="w")
+
             # Entry widget
             entry = ttk.Entry(self.edit_frame)
-            entry.grid(row=idx, column=1, pady=5, sticky="ew", padx=(0, 10))
+            entry.grid(row=idx, column=2, pady=5, sticky="ew", padx=(0, 10))
 
             # Get and format value
             value = df.iloc[row_idx][col]
