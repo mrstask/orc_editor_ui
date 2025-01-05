@@ -4,6 +4,7 @@ from tkinter import ttk, messagebox
 import numpy as np
 import pandas as pd
 
+from list_edit_dialog import ListEditDialog
 from utils import get_spark_type
 
 
@@ -51,19 +52,53 @@ class EditDialog(tk.Toplevel):
             type_label = ttk.Label(self.edit_frame, text=f"({spark_type})", foreground="gray")
             type_label.grid(row=idx, column=1, padx=(0, 10), pady=5, sticky="w")
 
-            # Entry widget
-            entry = ttk.Entry(self.edit_frame)
-            entry.grid(row=idx, column=2, pady=5, sticky="ew", padx=(0, 10))
+            # Entry widget with edit button for lists
+            entry_frame = ttk.Frame(self.edit_frame)
+            entry_frame.grid(row=idx, column=2, pady=5, sticky="ew", padx=(0, 10))
+            entry_frame.columnconfigure(0, weight=1)
+
+            entry = ttk.Entry(entry_frame)
+            entry.grid(row=0, column=0, sticky="ew")
 
             # Get and format value
             value = df.iloc[row_idx][col]
             if isinstance(value, (np.ndarray, list)):
                 if isinstance(value, np.ndarray):
-                    entry_value = f"[{','.join(map(str, value))}]" if value.size > 0 else '[]'
+                    list_value = value.tolist() if value.size > 0 else []
+                    entry_value = f"[{','.join(map(str, list_value))}]"
                 else:
+                    list_value = value
                     entry_value = f"[{','.join(map(str, value))}]" if value else '[]'
+
+                # Add edit button for list types
+                edit_btn = ttk.Button(entry_frame, text="...", width=3)
+                edit_btn.grid(row=0, column=1, padx=(5, 0))
+
+                # Create closure to capture the current entry and list_value
+                def create_edit_callback(entry_widget, current_value, col_name):
+                    def edit_list():
+                        # Determine element type from the first element or default to int
+                        element_type = "int"
+                        if current_value:
+                            first_elem = current_value[0] if isinstance(current_value, list) else \
+                                current_value.tolist()[0]
+                            if isinstance(first_elem, float):
+                                element_type = "float"
+                            elif isinstance(first_elem, str):
+                                element_type = "str"
+
+                        dialog = ListEditDialog(self, current_value, col_name, element_type)
+                        self.wait_window(dialog)
+                        if dialog.result is not None:
+                            entry_widget.delete(0, tk.END)
+                            entry_widget.insert(0, f"[{','.join(map(str, dialog.result))}]")
+
+                    return edit_list
+
+                edit_btn.config(command=create_edit_callback(entry, list_value, col))
             else:
                 entry_value = str(value) if pd.notna(value) else ""
+
             entry.insert(0, entry_value)
             self.edit_widgets[col] = entry
 
