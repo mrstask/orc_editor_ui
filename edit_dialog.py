@@ -1,11 +1,9 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
-
-import numpy as np
 import pandas as pd
-
-from list_edit_dialog import ListEditDialog
+import numpy as np
 from utils import get_spark_type
+from list_edit_dialog import ListEditDialog
 
 
 class EditDialog(tk.Toplevel):
@@ -81,8 +79,13 @@ class EditDialog(tk.Toplevel):
                         element_type = "int"
                         if current_value:
                             first_elem = current_value[0] if isinstance(current_value, list) else \
-                                current_value.tolist()[0]
-                            if isinstance(first_elem, float):
+                            current_value.tolist()[0]
+                            if isinstance(first_elem, dict):
+                                element_type = "struct"
+                            elif isinstance(first_elem, str) and (
+                                    first_elem.startswith('{') or first_elem.startswith('[')):
+                                element_type = "struct"
+                            elif isinstance(first_elem, float):
                                 element_type = "float"
                             elif isinstance(first_elem, str):
                                 element_type = "str"
