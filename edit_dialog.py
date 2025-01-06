@@ -146,13 +146,39 @@ class EditDialog(tk.Toplevel):
         for col, widget in self.edit_widgets.items():
             value = widget.get()
             original_dtype = self.df[col].dtype
+            sample_value = self.df.iloc[0][col]  # Get sample value to help determine type
 
             try:
                 if value.startswith('[') and value.endswith(']'):
                     try:
+                        # Remove brackets and split
                         items = value[1:-1].split(',')
-                        items = [int(item.strip()) for item in items if item.strip()]
-                        value = items
+                        # Clean each item
+                        items = [item.strip().strip('"\'') for item in items if item.strip()]
+
+                        # Determine type based on sample value
+                        if isinstance(sample_value, (np.ndarray, list)):
+                            if len(sample_value) > 0:
+                                first_elem = sample_value[0] if isinstance(sample_value, list) else sample_value.item(0)
+                                if isinstance(first_elem, str):
+                                    value = items  # Keep as strings
+                                elif isinstance(first_elem, int):
+                                    value = [int(float(item)) for item in items]
+                                elif isinstance(first_elem, float):
+                                    value = [float(item) for item in items]
+                                else:
+                                    value = items  # Default to strings
+                            else:
+                                value = items  # Empty list case
+                        else:
+                            # If we can't determine from sample, try int, then float, fallback to string
+                            try:
+                                value = [int(float(item)) for item in items]
+                            except ValueError:
+                                try:
+                                    value = [float(item) for item in items]
+                                except ValueError:
+                                    value = items  # Keep as strings
                     except ValueError:
                         messagebox.showerror("Error", f"Invalid list format for column '{col}'")
                         return

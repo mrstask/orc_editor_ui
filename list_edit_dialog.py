@@ -1,5 +1,6 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
+import json
 
 
 class ListEditDialog(tk.Toplevel):
@@ -9,13 +10,14 @@ class ListEditDialog(tk.Toplevel):
         self.list_value = list_value if list_value else []
         self.element_type = element_type
         self.result = None
+        self.is_complex_type = element_type == "struct" or element_type == "str"
 
         # Make dialog modal
         self.transient(parent)
         self.grab_set()
 
         # Configure dialog size and position
-        self.geometry("400x500")
+        self.geometry("600x500")  # Increased width for complex types
 
         # Create main container
         main_frame = ttk.Frame(self, padding="10")
@@ -44,6 +46,8 @@ class ListEditDialog(tk.Toplevel):
         # Add entries for existing values
         self.entries = []
         for value in self.list_value:
+            if isinstance(value, (dict, str)) and self.is_complex_type:
+                value = json.dumps(value if isinstance(value, dict) else json.loads(value), indent=2)
             self.add_entry(value)
 
         # Create control buttons
@@ -85,11 +89,17 @@ class ListEditDialog(tk.Toplevel):
         # Index label
         ttk.Label(frame, text=f"{idx}:").grid(row=0, column=0, padx=(0, 5))
 
-        # Entry widget
-        entry = ttk.Entry(frame)
-        entry.grid(row=0, column=1, sticky="ew")
-        if value is not None:
-            entry.insert(0, str(value))
+        # Entry or Text widget based on type
+        if self.is_complex_type:
+            entry = tk.Text(frame, height=4, width=50)
+            entry.grid(row=0, column=1, sticky="ew")
+            if value is not None:
+                entry.insert("1.0", str(value))
+        else:
+            entry = ttk.Entry(frame)
+            entry.grid(row=0, column=1, sticky="ew")
+            if value is not None:
+                entry.insert(0, str(value))
 
         self.entries.append(entry)
         self.update_scroll_region()
@@ -102,23 +112,42 @@ class ListEditDialog(tk.Toplevel):
             entry.destroy()
             self.update_scroll_region()
 
+    def get_entry_value(self, entry):
+        """Get value from either Entry or Text widget"""
+        if isinstance(entry, tk.Text):
+            return entry.get("1.0", "end-1c")  # Get text without trailing newline
+        return entry.get()
+
     def validate_values(self):
         """Validate and convert all entry values"""
         values = []
         for entry in self.entries:
-            value = entry.get().strip()
+            value = self.get_entry_value(entry).strip()
             if not value:  # Skip empty entries
                 continue
             try:
-                if self.element_type == "int":
-                    values.append(int(float(value)))
+                if self.is_complex_type:
+                    # Try to parse as JSON to validate, but keep as string
+                    parsed = json.loads(value)
+                    values.append(parsed if isinstance(parsed, dict) else value)
+                elif self.element_type == "int":
+                    # Remove any surrounding brackets and quotes
+                    clean_value = value.strip('[]"\' ')
+                    values.append(int(float(clean_value)))
                 elif self.element_type == "float":
-                    values.append(float(value))
+                    clean_value = value.strip('[]"\' ')
+                    values.append(float(clean_value))
                 else:
-                    values.append(str(value))
-            except ValueError:
+                    # For string types, preserve the value but remove list formatting if present
+                    clean_value = value.strip('[]"\' ')
+                    values.append(clean_value)
+            except ValueError as e:
                 messagebox.showerror("Error",
-                                     f"Invalid {self.element_type} format: {value}")
+                                     f"Invalid {self.element_type} format: {value}\nError: {str(e)}")
+                return None
+            except json.JSONDecodeError as e:
+                messagebox.showerror("Error",
+                                     f"Invalid JSON format: {value}\nError: {str(e)}")
                 return None
         return values
 
