@@ -170,15 +170,40 @@ class ORCEditor:
             try:
                 df_to_save = self.df.copy()
 
-                # Handle special column types
+                # Handle special column types and ensure proper types for each column
                 for column in df_to_save.columns:
-                    if df_to_save[column].dtype == 'object':
-                        df_to_save[column] = df_to_save[column].apply(
-                            lambda x: ','.join(map(str, x)) if isinstance(x, (list, np.ndarray)) else str(
-                                x) if pd.notna(x) else None
-                        )
+                    # Get sample non-null value to determine column type
+                    sample_value = df_to_save[column].dropna().iloc[0] if not df_to_save[column].isna().all() else None
 
-                table = pyarrow.Table.from_pandas(df_to_save)
+                    if isinstance(sample_value, (list, np.ndarray)):
+                        # Convert arrays/lists to string representation
+                        df_to_save[column] = df_to_save[column].apply(
+                            lambda x: ','.join(map(str, x)) if isinstance(x, (list, np.ndarray)) and len(x) > 0
+                            else '' if isinstance(x, (list, np.ndarray))
+                            else str(x) if pd.notna(x) else ''
+                        )
+                    elif pd.api.types.is_integer_dtype(df_to_save[column].dtype):
+                        # Convert integer columns, replace NaN with 0
+                        df_to_save[column] = df_to_save[column].fillna(0).astype('int64')
+                    elif pd.api.types.is_float_dtype(df_to_save[column].dtype):
+                        # Convert float columns, replace NaN with 0.0
+                        df_to_save[column] = df_to_save[column].fillna(0.0).astype('float64')
+                    else:
+                        # Convert object/string columns, replace NaN with empty string
+                        df_to_save[column] = df_to_save[column].fillna('').astype(str)
+
+                # Convert to PyArrow table with explicit schema
+                schema = []
+                for column in df_to_save.columns:
+                    if pd.api.types.is_integer_dtype(df_to_save[column].dtype):
+                        schema.append(pyarrow.field(column, pyarrow.int64()))
+                    elif pd.api.types.is_float_dtype(df_to_save[column].dtype):
+                        schema.append(pyarrow.field(column, pyarrow.float64()))
+                    else:
+                        schema.append(pyarrow.field(column, pyarrow.string()))
+
+                table = pyarrow.Table.from_pandas(df_to_save, schema=pyarrow.schema(schema))
+
                 with pyarrow.orc.ORCWriter(filename) as writer:
                     writer.write(table)
                 messagebox.showinfo("Success", "File saved successfully")
