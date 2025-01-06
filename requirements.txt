@@ -1,0 +1,13 @@
+altgraph==0.17.4
+macholib==1.16.3
+modulegraph==0.19.6
+numpy==2.2.1
+packaging==24.2
+pandas==2.2.3
+pyarrow==18.1.0
+pyinstaller==6.11.1
+pyinstaller-hooks-contrib==2024.11
+python-dateutil==2.9.0.post0
+pytz==2024.2
+six==1.17.0
+tzdata==2024.2
