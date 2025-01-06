@@ -15,6 +15,7 @@ class ORCEditor:
         self.root.title("ORC File Editor")
         self.current_file = None
         self.df = None
+        self.original_schema = None
 
         # Configure root window to be responsive
         root.grid_rowconfigure(0, weight=1)
@@ -152,10 +153,64 @@ class ORCEditor:
             try:
                 self.current_file = filename
                 orc_file = orc.ORCFile(filename)
-                self.df = orc_file.read().to_pandas()
+
+                # Get the table first to preserve all schema information
+                table = orc_file.read()
+
+                # Store the original schema and metadata
+                self.original_schema = table.schema
+                self.original_metadata = table.schema.metadata
+
+                print("Original ORC schema:", self.original_schema)
+                print("Original metadata:", self.original_metadata)
+
+                # Convert to pandas
+                self.df = table.to_pandas()
                 self.update_table_view()
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to open file: {str(e)}")
+
+    def compare_schemas(self, original_schema, saved_schema):
+        """Compare two schemas and return differences"""
+
+        def schema_to_dict(schema):
+            result = {}
+            for field in schema:
+                if isinstance(field.type, pyarrow.ListType):
+                    list_type = field.type
+                    if isinstance(list_type.value_type, pyarrow.StructType):
+                        struct_fields = {}
+                        for struct_field in list_type.value_type:
+                            struct_fields[struct_field.name] = str(struct_field.type)
+                        result[field.name] = {
+                            'type': 'list<struct>',
+                            'struct_fields': struct_fields
+                        }
+                    else:
+                        result[field.name] = f'list<{str(list_type.value_type)}>'
+                else:
+                    result[field.name] = str(field.type)
+            return result
+
+        original_dict = schema_to_dict(original_schema)
+        saved_dict = schema_to_dict(saved_schema)
+
+        differences = []
+        for field in original_dict:
+            if field not in saved_dict:
+                differences.append(f"Missing field in saved schema: {field}")
+            elif original_dict[field] != saved_dict[field]:
+                differences.append(
+                    f"Type mismatch for {field}:\n"
+                    f"  Original: {original_dict[field]}\n"
+                    f"  Saved: {saved_dict[field]}"
+                )
+
+        for field in saved_dict:
+            if field not in original_dict:
+                differences.append(f"Extra field in saved schema: {field}")
+
+        return differences
 
     def save_file(self):
         if self.df is None:
@@ -166,50 +221,57 @@ class ORCEditor:
             defaultextension=".orc",
             filetypes=[("ORC files", "*.orc"), ("All files", "*.*")]
         )
-        if filename:
-            try:
-                df_to_save = self.df.copy()
 
-                # Handle special column types and ensure proper types for each column
-                for column in df_to_save.columns:
-                    # Get sample non-null value to determine column type
-                    sample_value = df_to_save[column].dropna().iloc[0] if not df_to_save[column].isna().all() else None
+        if not filename:
+            return
 
-                    if isinstance(sample_value, (list, np.ndarray)):
-                        # Convert arrays/lists to string representation
-                        df_to_save[column] = df_to_save[column].apply(
-                            lambda x: ','.join(map(str, x)) if isinstance(x, (list, np.ndarray)) and len(x) > 0
-                            else '' if isinstance(x, (list, np.ndarray))
-                            else str(x) if pd.notna(x) else ''
-                        )
-                    elif pd.api.types.is_integer_dtype(df_to_save[column].dtype):
-                        # Convert integer columns, replace NaN with 0
-                        df_to_save[column] = df_to_save[column].fillna(0).astype('int64')
-                    elif pd.api.types.is_float_dtype(df_to_save[column].dtype):
-                        # Convert float columns, replace NaN with 0.0
-                        df_to_save[column] = df_to_save[column].fillna(0.0).astype('float64')
-                    else:
-                        # Convert object/string columns, replace NaN with empty string
-                        df_to_save[column] = df_to_save[column].fillna('').astype(str)
+        try:
+            if hasattr(self, 'original_schema'):
+                print("Using original schema for saving:", self.original_schema)
 
-                # Convert to PyArrow table with explicit schema
-                schema = []
-                for column in df_to_save.columns:
-                    if pd.api.types.is_integer_dtype(df_to_save[column].dtype):
-                        schema.append(pyarrow.field(column, pyarrow.int64()))
-                    elif pd.api.types.is_float_dtype(df_to_save[column].dtype):
-                        schema.append(pyarrow.field(column, pyarrow.float64()))
-                    else:
-                        schema.append(pyarrow.field(column, pyarrow.string()))
+                # Create table with original schema
+                table = pyarrow.Table.from_pandas(
+                    self.df,
+                    schema=self.original_schema
+                )
 
-                table = pyarrow.Table.from_pandas(df_to_save, schema=pyarrow.schema(schema))
+                # Set metadata if it exists
+                if hasattr(self, 'original_metadata'):
+                    table = table.replace_schema_metadata(self.original_metadata)
+            else:
+                print("Warning: No original schema available, inferring schema from data")
+                table = pyarrow.Table.from_pandas(self.df)
 
-                with pyarrow.orc.ORCWriter(filename) as writer:
-                    writer.write(table)
+            # Save the file
+            with pyarrow.orc.ORCWriter(filename) as writer:
+                writer.write(table)
+
+            # Validate saved file
+            orc_file = orc.ORCFile(filename)
+            saved_table = orc_file.read()
+            saved_schema = saved_table.schema
+
+            # Compare schemas
+            if hasattr(self, 'original_schema'):
+                differences = self.compare_schemas(self.original_schema, saved_schema)
+                if differences:
+                    mismatch_msg = "Schema differences detected:\n" + "\n".join(differences)
+                    messagebox.showwarning("Schema Mismatch Warning", mismatch_msg)
+
+                    # Print detailed schema information for debugging
+                    print("\nDetailed Schema Information:")
+                    print("Original Schema:")
+                    print(self.original_schema.to_string(show_field_metadata=True))
+                    print("\nSaved Schema:")
+                    print(saved_schema.to_string(show_field_metadata=True))
+                else:
+                    messagebox.showinfo("Success", "File saved successfully with schema preserved")
+            else:
                 messagebox.showinfo("Success", "File saved successfully")
-            except Exception as e:
-                import traceback
-                print("Error saving file:", traceback.format_exc())
-                messagebox.showerror("Error", f"Failed to save file: {str(e)}")
-                detail_msg = "Details:\n" + traceback.format_exc()
-                messagebox.showerror("Detailed Error", detail_msg)
+
+        except Exception as e:
+            import traceback
+            print("Error saving file:", traceback.format_exc())
+            messagebox.showerror("Error", f"Failed to save file: {str(e)}")
+            detail_msg = "Details:\n" + traceback.format_exc()
+            messagebox.showerror("Detailed Error", detail_msg)
