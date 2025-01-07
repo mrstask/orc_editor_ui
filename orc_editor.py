@@ -142,7 +142,15 @@ class ORCEditor:
         if dialog.result:
             # Update DataFrame with new values
             for col, value in dialog.result.items():
-                self.df.loc[idx, col] = value
+                if isinstance(value, list):
+                    if isinstance(self.df.loc[idx, col], np.ndarray) and type(self.df.loc[idx, col][0]) == dict:
+                        value = np.array(value)
+                        for i, item in enumerate(self.df.loc[idx, col]):
+                            self.df.loc[idx, col][i] = value[i]
+                    else:
+                        self.df.loc[idx, col] = value
+                else:
+                    self.df.loc[idx, col] = value
             self.update_table_view()
 
     def open_file(self):
@@ -160,9 +168,6 @@ class ORCEditor:
                 # Store the original schema and metadata
                 self.original_schema = table.schema
                 self.original_metadata = table.schema.metadata
-
-                print("Original ORC schema:", self.original_schema)
-                print("Original metadata:", self.original_metadata)
 
                 # Convert to pandas
                 self.df = table.to_pandas()
