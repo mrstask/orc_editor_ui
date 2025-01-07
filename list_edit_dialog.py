@@ -17,11 +17,15 @@ class ListEditDialog(tk.Toplevel):
         self.grab_set()
 
         # Configure dialog size and position
-        self.geometry("600x500")  # Increased width for complex types
+        self.geometry("800x600")  # Increased size for better JSON editing
 
         # Create main container
         main_frame = ttk.Frame(self, padding="10")
         main_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Add type indicator label
+        type_label = ttk.Label(main_frame, text=f"Type: {element_type}")
+        type_label.pack(fill=tk.X, pady=(0, 10))
 
         # Create list editing frame
         list_frame = ttk.Frame(main_frame)
@@ -43,19 +47,34 @@ class ListEditDialog(tk.Toplevel):
         self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
-        # Add entries for existing values
-        self.entries = []
-        for value in self.list_value:
-            if isinstance(value, (dict, str)) and self.is_complex_type:
-                value = json.dumps(value if isinstance(value, dict) else json.loads(value), indent=2)
-            self.add_entry(value)
+        # Special handling for list of dictionaries
+        if self.is_complex_type and self.list_value and isinstance(self.list_value[0], dict):
+            # Create a single text widget for the entire JSON array
+            self.json_text = tk.Text(self.entries_frame, height=20, width=80)
+            self.json_text.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+            json_str = json.dumps(self.list_value, indent=2)
+            self.json_text.insert("1.0", json_str)
+            self.entries = [self.json_text]  # Keep track of the widget
+        else:
+            # Add entries for existing values
+            self.entries = []
+            for value in self.list_value:
+                if isinstance(value, (dict, str)) and self.is_complex_type:
+                    if isinstance(value, dict):
+                        value = json.dumps(value, indent=2)
+                    elif self.is_json(value):
+                        try:
+                            parsed = json.loads(value)
+                            value = json.dumps(parsed, indent=2)
+                        except json.JSONDecodeError:
+                            pass
+                self.add_entry(value)
 
-        # Create control buttons
-        control_frame = ttk.Frame(main_frame)
-        control_frame.pack(fill=tk.X, pady=(0, 10))
-
-        ttk.Button(control_frame, text="Add Item", command=self.add_entry).pack(side=tk.LEFT, padx=5)
-        ttk.Button(control_frame, text="Remove Last", command=self.remove_last).pack(side=tk.LEFT, padx=5)
+            # Create control buttons (only for non-JSON array cases)
+            control_frame = ttk.Frame(main_frame)
+            control_frame.pack(fill=tk.X, pady=(0, 10))
+            ttk.Button(control_frame, text="Add Item", command=self.add_entry).pack(side=tk.LEFT, padx=5)
+            ttk.Button(control_frame, text="Remove Last", command=self.remove_last).pack(side=tk.LEFT, padx=5)
 
         # Create OK/Cancel buttons
         button_frame = ttk.Frame(main_frame)
@@ -70,6 +89,16 @@ class ListEditDialog(tk.Toplevel):
         # Update scroll region when entries are added/removed
         self.entries_frame.bind("<Configure>", self.update_scroll_region)
         self.canvas.bind("<Configure>", self.update_canvas_width)
+
+    def is_json(self, value):
+        """Check if a string is valid JSON"""
+        if not isinstance(value, str):
+            return False
+        try:
+            json.loads(value)
+            return True
+        except (ValueError, TypeError):
+            return False
 
     def update_scroll_region(self, event=None):
         """Update the scroll region when the frame size changes"""
@@ -91,7 +120,7 @@ class ListEditDialog(tk.Toplevel):
 
         # Entry or Text widget based on type
         if self.is_complex_type:
-            entry = tk.Text(frame, height=4, width=50)
+            entry = tk.Text(frame, height=4, width=80)
             entry.grid(row=0, column=1, sticky="ew")
             if value is not None:
                 entry.insert("1.0", str(value))
@@ -120,6 +149,38 @@ class ListEditDialog(tk.Toplevel):
 
     def validate_values(self):
         """Validate and convert all entry values"""
+        # Special handling for the meta column with list of dictionaries
+        if self.is_complex_type and len(self.entries) == 1 and isinstance(self.entries[0], tk.Text):
+            try:
+                json_str = self.get_entry_value(self.entries[0])
+                # First verify it's valid JSON
+                values = json.loads(json_str)
+                if not isinstance(values, list):
+                    values = [values]
+
+                # Now reconstruct the string but maintaining the exact format
+                result = []
+                for item in values:
+                    if isinstance(item, dict):
+                        # Handle the value field specially to maintain its format
+                        if 'value' in item:
+                            value = item['value']
+                            if isinstance(value, str) and (value.startswith('{') or value.startswith('[')):
+                                # Keep complex values as is
+                                value_str = value
+                            else:
+                                # Wrap simple values in quotes
+                                value_str = f'"{value}"'
+                            item['value'] = value_str
+                        result.append(item)
+                    else:
+                        result.append(item)
+                return result
+            except json.JSONDecodeError as e:
+                messagebox.showerror("Error", f"Invalid JSON format:\n{str(e)}")
+                return None
+
+        # Regular handling for individual entries
         values = []
         for entry in self.entries:
             value = self.get_entry_value(entry).strip()
@@ -127,27 +188,30 @@ class ListEditDialog(tk.Toplevel):
                 continue
             try:
                 if self.is_complex_type:
-                    # Try to parse as JSON to validate, but keep as string
-                    parsed = json.loads(value)
-                    values.append(parsed if isinstance(parsed, dict) else value)
+                    try:
+                        parsed = json.loads(value)
+                        if isinstance(parsed, dict) and 'value' in parsed:
+                            # Handle the special case of value field
+                            value_content = parsed['value']
+                            if isinstance(value_content, str) and (value_content.startswith('{') or value_content.startswith('[')):
+                                parsed['value'] = value_content
+                            else:
+                                parsed['value'] = f'"{value_content}"'
+                        values.append(parsed)
+                    except json.JSONDecodeError:
+                        values.append(value)
                 elif self.element_type == "int":
-                    # Remove any surrounding brackets and quotes
                     clean_value = value.strip('[]"\' ')
                     values.append(int(float(clean_value)))
                 elif self.element_type == "float":
                     clean_value = value.strip('[]"\' ')
                     values.append(float(clean_value))
                 else:
-                    # For string types, preserve the value but remove list formatting if present
                     clean_value = value.strip('[]"\' ')
                     values.append(clean_value)
             except ValueError as e:
                 messagebox.showerror("Error",
-                                     f"Invalid {self.element_type} format: {value}\nError: {str(e)}")
-                return None
-            except json.JSONDecodeError as e:
-                messagebox.showerror("Error",
-                                     f"Invalid JSON format: {value}\nError: {str(e)}")
+                                    f"Invalid {self.element_type} format: {value}\nError: {str(e)}")
                 return None
         return values
 

@@ -1,9 +1,12 @@
+import ast
 import tkinter as tk
 from tkinter import ttk, messagebox
-import pandas as pd
+
 import numpy as np
-from utils import get_spark_type
+import pandas as pd
+
 from list_edit_dialog import ListEditDialog
+from utils import get_spark_type
 
 
 class EditDialog(tk.Toplevel):
@@ -79,7 +82,7 @@ class EditDialog(tk.Toplevel):
                         element_type = "int"
                         if current_value:
                             first_elem = current_value[0] if isinstance(current_value, list) else \
-                            current_value.tolist()[0]
+                                current_value.tolist()[0]
                             if isinstance(first_elem, dict):
                                 element_type = "struct"
                             elif isinstance(first_elem, str) and (
@@ -151,34 +154,38 @@ class EditDialog(tk.Toplevel):
             try:
                 if value.startswith('[') and value.endswith(']'):
                     try:
-                        # Remove brackets and split
-                        items = value[1:-1].split(',')
-                        # Clean each item
-                        items = [item.strip().strip('"\'') for item in items if item.strip()]
+                        try:
+                            value = ast.literal_eval(value)
+                        except Exception as e:
+                            print(e)
+                            # Remove brackets and split
+                            items = value[1:-1].split(',')
+                            # Clean each item
+                            items = [item.strip().strip('"\'') for item in items if item.strip()]
 
-                        # Determine type based on sample value
-                        if isinstance(sample_value, (np.ndarray, list)):
-                            if len(sample_value) > 0:
-                                first_elem = sample_value[0] if isinstance(sample_value, list) else sample_value.item(0)
-                                if isinstance(first_elem, str):
-                                    value = items  # Keep as strings
-                                elif isinstance(first_elem, int):
-                                    value = [int(float(item)) for item in items]
-                                elif isinstance(first_elem, float):
-                                    value = [float(item) for item in items]
+                            # Determine type based on sample value
+                            if isinstance(sample_value, (np.ndarray, list)):
+                                if len(sample_value) > 0:
+                                    first_elem = sample_value[0] if isinstance(sample_value, list) else sample_value.item(0)
+                                    if isinstance(first_elem, str):
+                                        value = items  # Keep as strings
+                                    elif isinstance(first_elem, int):
+                                        value = [int(float(item)) for item in items]
+                                    elif isinstance(first_elem, float):
+                                        value = [float(item) for item in items]
+                                    else:
+                                        value = items  # Default to strings
                                 else:
-                                    value = items  # Default to strings
+                                    value = items  # Empty list case
                             else:
-                                value = items  # Empty list case
-                        else:
-                            # If we can't determine from sample, try int, then float, fallback to string
-                            try:
-                                value = [int(float(item)) for item in items]
-                            except ValueError:
+                                # If we can't determine from sample, try int, then float, fallback to string
                                 try:
-                                    value = [float(item) for item in items]
+                                    value = [int(float(item)) for item in items]
                                 except ValueError:
-                                    value = items  # Keep as strings
+                                    try:
+                                        value = [float(item) for item in items]
+                                    except ValueError:
+                                        value = items  # Keep as strings
                     except ValueError:
                         messagebox.showerror("Error", f"Invalid list format for column '{col}'")
                         return
