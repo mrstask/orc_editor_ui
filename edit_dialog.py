@@ -158,12 +158,9 @@ class EditDialog(tk.Toplevel):
                             value = ast.literal_eval(value)
                         except Exception as e:
                             print(e)
-                            # Remove brackets and split
                             items = value[1:-1].split(',')
-                            # Clean each item
                             items = [item.strip().strip('"\'') for item in items if item.strip()]
 
-                            # Determine type based on sample value
                             if isinstance(sample_value, (np.ndarray, list)):
                                 if len(sample_value) > 0:
                                     first_elem = sample_value[0] if isinstance(sample_value, list) else sample_value.item(0)
@@ -178,7 +175,6 @@ class EditDialog(tk.Toplevel):
                                 else:
                                     value = items  # Empty list case
                             else:
-                                # If we can't determine from sample, try int, then float, fallback to string
                                 try:
                                     value = [int(float(item)) for item in items]
                                 except ValueError:

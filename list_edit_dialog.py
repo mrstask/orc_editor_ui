@@ -255,73 +255,72 @@ class ListEditDialog(tk.Toplevel):
         return entry.get()
 
     def validate_values(self):
-        """Validate and convert all entry values"""
-        # Special handling for the meta column with list of dictionaries
+        """Validate and convert all entry values."""
         if self.is_complex_type and len(self.entries) == 1 and isinstance(self.entries[0], tk.Text):
-            try:
-                json_str = self.get_entry_value(self.entries[0])
-                # First verify it's valid JSON
-                values = json.loads(json_str)
-                if not isinstance(values, list):
-                    values = [values]
+            return self._validate_complex_entry_with_json_editor()
 
-                # Now reconstruct the string but maintaining the exact format
-                result = []
-                for item in values:
-                    if isinstance(item, dict):
-                        # Handle the value field specially to maintain its format
-                        if 'value' in item:
-                            value = item['value']
-                            if isinstance(value, str) and (value.startswith('{') or value.startswith('[')):
-                                # Keep complex values as is
-                                value_str = value
-                            else:
-                                # Wrap simple values in quotes
-                                value_str = f'"{value}"'
-                            item['value'] = value_str
-                        result.append(item)
-                    else:
-                        result.append(item)
-                return result
-            except json.JSONDecodeError as e:
-                messagebox.showerror("Error", f"Invalid JSON format:\n{str(e)}")
-                return None
-
-        # Regular handling for individual entries
-        values = []
+        validated_values = []
         for entry in self.entries:
-            value = self.get_entry_value(entry).strip()
-            if not value:  # Skip empty entries
+            entry_value = self.get_entry_value(entry).strip()
+            if not entry_value:  # Skip empty entries
                 continue
+
             try:
                 if self.is_complex_type:
-                    try:
-                        parsed = json.loads(value)
-                        if isinstance(parsed, dict) and 'value' in parsed:
-                            # Handle the special case of value field
-                            value_content = parsed['value']
-                            if isinstance(value_content, str) and (
-                                    value_content.startswith('{') or value_content.startswith('[')):
-                                parsed['value'] = value_content
-                            else:
-                                parsed['value'] = f'"{value_content}"'
-                        values.append(parsed)
-                    except json.JSONDecodeError:
-                        values.append(value)
-                elif self.element_type == "int":
-                    clean_value = value.strip('[]"\' ')
-                    values.append(int(float(clean_value)))
-                elif self.element_type == "float":
-                    clean_value = value.strip('[]"\' ')
-                    values.append(float(clean_value))
+                    parsed_value = self._parse_json(entry_value)
+                    if parsed_value is not None:
+                        validated_values.append(parsed_value)
                 else:
-                    clean_value = value.strip('[]"\' ')
-                    values.append(clean_value)
+                    validated_values.append(self._convert_value(entry_value, self.element_type))
             except ValueError as e:
-                messagebox.showerror("Error",
-                                     f"Invalid {self.element_type} format: {value}\nError: {str(e)}")
+                messagebox.showerror("Error", f"Invalid {self.element_type} format: {entry_value}\nError: {str(e)}")
                 return None
-        return values
+
+        return validated_values
+
+    def _validate_complex_entry_with_json_editor(self):
+        """Handles complex entry validation when editing JSON directly."""
+        entry_value = self.get_entry_value(self.entries[0])
+        try:
+            values = self._parse_json(entry_value)
+            if not isinstance(values, list):
+                values = [values]
+
+            validated_values = []
+            for entry in values:
+                if isinstance(entry, dict) and 'value' in entry:
+                    entry['value'] = (
+                        entry['value']
+                        if isinstance(entry['value'], str) and (
+                                entry['value'].startswith("{") or entry['value'].startswith("["))
+                        else entry["value"]
+                    )
+                validated_values.append(entry)
+            return validated_values
+        except json.JSONDecodeError as e:
+            messagebox.showerror("Error", f"Invalid JSON format:\n{str(e)}")
+            return None
+
+    def _parse_json(self, value):
+        """Parses a JSON string into a Python object."""
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, dict) and 'value' in parsed:
+                if isinstance(parsed['value'], str):
+                    parsed['value'] = parsed['value'].strip('"')
+            return parsed
+        except json.JSONDecodeError:
+            return value
+
+    def _convert_value(self, value, element_type):
+        """Converts a value to the desired type (int, float, or str)."""
+        clean_value = value.strip('[]"\' ')
+        if element_type == "int":
+            return int(float(clean_value))
+        elif element_type == "float":
+            return float(clean_value)
+        else:
+            return clean_value
 
     def ok(self):
         self.result = self.validate_values()

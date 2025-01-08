@@ -140,18 +140,37 @@ class ORCEditor:
         self.root.wait_window(dialog)
 
         if dialog.result:
-            # Update DataFrame with new values
             for col, value in dialog.result.items():
                 if isinstance(value, list):
-                    if isinstance(self.df.loc[idx, col], np.ndarray) and type(self.df.loc[idx, col][0]) == dict:
-                        value = np.array(value)
-                        for i, item in enumerate(self.df.loc[idx, col]):
-                            self.df.loc[idx, col][i] = value[i]
+                    print("List value:", value)
+                    if isinstance(self.df.loc[idx, col], np.ndarray):
+                        print(self.df.loc[idx, col])
+                        if self.df.loc[idx, col].size and type(self.df.loc[idx, col][0]) == dict:
+                            value = np.array(value)
+                            for i, item in enumerate(self.df.loc[idx, col]):
+                                self.df.loc[idx, col][i] = value[i]
                     else:
                         self.df.loc[idx, col] = value
                 else:
                     self.df.loc[idx, col] = value
             self.update_table_view()
+
+    def get_pandas_type(self, pa_type):
+        """Map PyArrow types to pandas dtypes"""
+        import pyarrow as pa
+
+        # Define type mappings
+        type_mapping = {
+            pa.timestamp('ms'): 'datetime64[ms]',
+            pa.int64(): 'int64',
+            pa.int32(): 'int32',
+            pa.float64(): 'float64',
+            pa.float32(): 'float32',
+            pa.string(): 'object',
+            pa.bool_(): 'bool',
+        }
+
+        return type_mapping.get(pa_type, None)
 
     def open_file(self):
         filename = filedialog.askopenfilename(
@@ -161,16 +180,22 @@ class ORCEditor:
             try:
                 self.current_file = filename
                 orc_file = orc.ORCFile(filename)
-
-                # Get the table first to preserve all schema information
                 table = orc_file.read()
 
                 # Store the original schema and metadata
                 self.original_schema = table.schema
                 self.original_metadata = table.schema.metadata
 
-                # Convert to pandas
+                # First convert to pandas without type mapping
                 self.df = table.to_pandas()
+
+                # Then apply type conversions after the fact
+                for field in table.schema:
+                    if str(field.type) == 'timestamp[ms]' or str(field.type) == 'int64':
+                        if field.name in self.df.columns:
+                            # Fill NaN values with -1 before converting to int64
+                            self.df[field.name] = self.df[field.name].fillna(-1).astype('int64')
+
                 self.update_table_view()
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to open file: {str(e)}")
