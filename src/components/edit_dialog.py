@@ -1,12 +1,10 @@
 import ast
 import tkinter as tk
 from tkinter import ttk, messagebox
-import pandas as pd
-import numpy as np
-from typing import Dict, Any, Optional, List
 
-from list_edit_dialog import ListEditDialog
-from src.utils.spark import get_spark_type
+import numpy as np
+import pandas as pd
+from src.utils.spark import get_spark_type  # Import the get_spark_type function
 
 
 class EditDialog(tk.Toplevel):
@@ -59,9 +57,25 @@ class EditDialog(tk.Toplevel):
 
             # Get and format value
             value = self.df.iloc[self.row_idx][col]
-            entry_value = str(value) if pd.notna(value) else ""
+
+            # Handle arrays and lists
+            if isinstance(value, (np.ndarray, list)):
+                if isinstance(value, np.ndarray):
+                    entry_value = f"[{','.join(map(str, value.tolist()))}]" if value.size > 0 else "[]"
+                else:  # list
+                    entry_value = f"[{','.join(map(str, value))}]" if value else "[]"
+            else:
+                # Handle scalar values
+                entry_value = str(value) if pd.notna(value) else ""
+
             entry.insert(0, entry_value)
             self.edit_widgets[col] = entry
+
+            # Add PySpark type label
+            spark_type = get_spark_type(self.df[col].dtype, value)
+            ttk.Label(self.edit_frame, text=spark_type, anchor="w").grid(
+                row=idx, column=2, padx=(10, 0), pady=5, sticky="w"
+            )
 
     def _layout_widgets(self):
         """Layout all widgets in the dialog."""
