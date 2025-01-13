@@ -133,27 +133,49 @@ class ORCEditor:
             messagebox.showwarning("Warning", "Please select a row to edit")
             return
 
-        idx = self.tree.index(selection[0])
+        idx = self.tree.index(selection[0])  # Get the index of the selected row
         visible_columns = [col for col in self.df.columns if not self.is_empty_list_column(col)]
 
+        # Open the EditDialog
         dialog = EditDialog(self.root, self.df, idx, visible_columns)
-        self.root.wait_window(dialog)
+        self.root.wait_window(dialog)  # Wait for the dialog to close
 
+        # If changes were made and confirmed
         if dialog.result:
-            for col, value in dialog.result.items():
-                if isinstance(value, list):
-                    print("List value:", value)
-                    if isinstance(self.df.loc[idx, col], np.ndarray):
-                        print(self.df.loc[idx, col])
-                        if self.df.loc[idx, col].size and type(self.df.loc[idx, col][0]) == dict:
-                            value = np.array(value)
-                            for i, item in enumerate(self.df.loc[idx, col]):
-                                self.df.loc[idx, col][i] = value[i]
+            try:
+                # Update the DataFrame with the new values
+                for col, value in dialog.result.items():
+                    if isinstance(value, list):
+                        print("List value:", value)
+                        if isinstance(self.df.loc[idx, col], np.ndarray):
+                            print("Existing value in DataFrame (numpy array):", self.df.loc[idx, col])
+                            if self.df.loc[idx, col].size and isinstance(self.df.loc[idx, col][0], dict):
+                                # Handle list of dictionaries in a numpy array
+                                value = np.array(value)
+                                for i, item in enumerate(value):
+                                    if i < len(self.df.loc[idx, col]):
+                                        self.df.loc[idx, col][i] = item
+                            else:
+                                # Handle regular numpy arrays
+                                self.df.loc[idx, col] = value
+                        else:
+                            # Handle regular Python lists
+                            self.df.loc[idx, col] = value
                     else:
+                        # Handle scalar values (e.g., strings, integers, dictionaries)
                         self.df.loc[idx, col] = value
-                else:
-                    self.df.loc[idx, col] = value
-            self.update_table_view()
+
+                # Refresh the table view to reflect the changes
+                self.update_table_view()
+
+                # Debugging: Print the updated row
+                print("Updated row:", self.df.iloc[idx])
+
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to update row: {str(e)}")
+                print("Error updating row:", e)
+                print(f"Column: {col}, Value: {value}, Type: {type(value)}")
+                print(f"Existing value in DataFrame: {self.df.loc[idx, col]}, Type: {type(self.df.loc[idx, col])}")
 
     def get_pandas_type(self, pa_type):
         """Map PyArrow types to pandas dtypes"""
