@@ -278,6 +278,10 @@ class ORCEditor:
             return
 
         try:
+            # Debug: Print the DataFrame before saving
+            print("DataFrame before saving:")
+            print(self.df.head())
+
             if hasattr(self, 'original_schema'):
                 print("Using original schema for saving:", self.original_schema)
 
@@ -298,10 +302,15 @@ class ORCEditor:
             with pyarrow.orc.ORCWriter(filename) as writer:
                 writer.write(table)
 
-            # Validate saved file
+            # Debug: Print the saved file's schema and data
+            print("Saved file schema:")
             orc_file = orc.ORCFile(filename)
             saved_table = orc_file.read()
             saved_schema = saved_table.schema
+            print(saved_schema.to_string(show_field_metadata=True))
+
+            print("Saved file data:")
+            print(saved_table.to_pandas().head())
 
             # Compare schemas
             if hasattr(self, 'original_schema'):
