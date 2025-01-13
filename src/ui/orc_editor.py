@@ -1,184 +1,307 @@
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
+import numpy as np
+import pandas as pd
+import pyarrow
+import pyarrow.orc as orc
+
 from src.components.edit_dialog import EditDialog
-from src.components.table_view import TableView
-from src.components.toolbar_frame import ToolbarFrame
-from src.data.data_manager import ORCDataManager
-from src.exceptions.orc_exceptions import ORCLoadError, ORCSaveError
-from src.utils.config import Config
-from src.utils.schema_validator import SchemaValidator
 
 
 class ORCEditor:
     def __init__(self, root):
         self.root = root
         self.root.title("ORC File Editor")
-        self._setup_window()
+        self.current_file = None
+        self.df = None
+        self.original_schema = None
 
-        self.data_manager = ORCDataManager()
-        self.schema_validator = SchemaValidator()
+        # Configure root window to be responsive
+        root.grid_rowconfigure(0, weight=1)
+        root.grid_columnconfigure(0, weight=1)
 
-        self._create_ui()
-        self._setup_bindings()
+        # Create main container
+        main_frame = ttk.Frame(root, padding="10")
+        main_frame.grid(row=0, column=0, sticky="nsew")
+        main_frame.grid_rowconfigure(1, weight=1)
+        main_frame.grid_columnconfigure(0, weight=1)
 
-    def _setup_window(self):
-        """Configure the main window grid system"""
-        self.root.grid_rowconfigure(0, weight=1)
-        self.root.grid_columnconfigure(0, weight=1)
+        # File operations buttons
+        self.create_file_buttons(main_frame)
 
-        # Configure main frame to expand
-        self.main_frame = ttk.Frame(self.root, padding=Config.DEFAULT_PADDING)
-        self.main_frame.grid(row=0, column=0, sticky="nsew")
+        # Create scrollable frame for the table
+        self.create_table_view(main_frame)
 
-        # Configure main frame grid weights
-        self.main_frame.grid_rowconfigure(1, weight=1)  # Row with table should expand
-        self.main_frame.grid_columnconfigure(0, weight=1)  # Column should expand
+    def create_file_buttons(self, parent):
+        button_frame = ttk.Frame(parent)
+        button_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
 
-    def _create_ui(self):
-        """Create and layout UI components with empty column toggle"""
-        # Create toolbar with callbacks including toggle
-        toolbar_callbacks = {
-            "Open ORC": self.open_file,
-            "Save ORC": self.save_file,
-            "Edit Row": self.edit_selected}
-        self.toolbar = ToolbarFrame(self.main_frame, toolbar_callbacks)
-        self.toolbar.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        ttk.Button(button_frame, text="Open ORC", command=self.open_file).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Save ORC", command=self.save_file).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Edit Row", command=self.edit_selected).pack(side=tk.LEFT, padx=5)
 
-        # Create table view
-        self.table_view = TableView(self.main_frame)
-        self.table_view.grid(row=1, column=0, sticky="nsew")
+    def create_table_view(self, parent):
+        # Create frame for the table and scrollbars
+        table_frame = ttk.Frame(parent)
+        table_frame.grid(row=1, column=0, sticky="nsew")
+        table_frame.grid_rowconfigure(0, weight=1)
+        table_frame.grid_columnconfigure(0, weight=1)
 
-    def toggle_empty_columns(self):
-        """Toggle visibility of empty columns"""
-        if self.data_manager.df is not None:
-            self.table_view.toggle_empty_columns(self.data_manager.df)
+        # Create canvas and scrollbars
+        canvas = tk.Canvas(table_frame)
+        vscrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=canvas.yview)
+        hscrollbar = ttk.Scrollbar(table_frame, orient="horizontal", command=canvas.xview)
 
-    def open_file(self):
-        try:
-            filename = filedialog.askopenfilename(filetypes=Config.FILE_TYPES)
-            if filename:
-                self.data_manager.load_file(filename)
-                self.table_view.update_data(self.data_manager.df)
-        except ORCLoadError as e:
-            messagebox.showerror("Error", str(e))
+        # Create frame inside canvas for the treeview
+        self.tree_frame = ttk.Frame(canvas)
 
-    def save_file(self):
-        try:
-            filename = filedialog.asksaveasfilename(
-                defaultextension=".orc",
-                filetypes=Config.FILE_TYPES
-            )
-            if filename:
-                validation_result = self.data_manager.save_file(filename)
-                if validation_result.has_differences:
-                    self._show_schema_differences(validation_result.differences)
-                else:
-                    messagebox.showinfo("Success", "File saved successfully")
-        except ORCSaveError as e:
-            messagebox.showerror("Error", str(e))
+        # Create Treeview
+        self.tree = ttk.Treeview(self.tree_frame)
+        self.tree.pack(fill=tk.BOTH, expand=True)
 
-    def _setup_bindings(self):
-        """Setup keyboard and mouse bindings for the editor"""
-        # Bind double-click on table row to edit
-        self.table_view.tree.bind('<Double-1>', lambda e: self.edit_selected())
+        # Configure canvas
+        canvas.configure(yscrollcommand=vscrollbar.set, xscrollcommand=hscrollbar.set)
 
-        # Bind keyboard shortcuts
-        self.root.bind('<Control-o>', lambda e: self.open_file())
-        self.root.bind('<Control-s>', lambda e: self.save_file())
-        self.root.bind('<Control-e>', lambda e: self.edit_selected())
+        # Add bindings for double-click
+        self.tree.bind('<Double-1>', lambda e: self.edit_selected())
 
-    def _show_schema_differences(self, differences):
-        """Display schema differences in a dialog
+        # Layout
+        canvas.grid(row=0, column=0, sticky="nsew")
+        vscrollbar.grid(row=0, column=1, sticky="ns")
+        hscrollbar.grid(row=1, column=0, sticky="ew")
 
-        Args:
-            differences: List of string descriptions of schema differences
-        """
-        detail_message = "\n".join(differences)
-        dialog = tk.Toplevel(self.root)
-        dialog.title("Schema Differences")
-        dialog.geometry("600x400")
+        # Create window inside canvas
+        canvas.create_window((0, 0), window=self.tree_frame, anchor="nw")
 
-        # Make dialog modal
-        dialog.transient(self.root)
-        dialog.grab_set()
+        # Configure scroll region when frame changes
+        self.tree_frame.bind("<Configure>",
+                             lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
 
-        # Create scrollable text area
-        frame = ttk.Frame(dialog, padding="10")
-        frame.pack(fill=tk.BOTH, expand=True)
+    def is_empty_list_column(self, column):
+        """Check if a column contains only empty lists/arrays."""
+        for value in self.df[column]:
+            if isinstance(value, (np.ndarray, list)):
+                if isinstance(value, np.ndarray) and value.size > 0:
+                    return False
+                if isinstance(value, list) and len(value) > 0:
+                    return False
+            elif not pd.isna(value):  # If it's not an empty list/array and not NaN
+                return False
+        return True
 
-        # Add warning message
-        warning_label = ttk.Label(
-            frame,
-            text="Warning: The following schema differences were detected:",
-            foreground="red"
-        )
-        warning_label.pack(fill=tk.X, pady=(0, 10))
+    def update_table_view(self):
+        # Clear existing items
+        for item in self.tree.get_children():
+            self.tree.delete(item)
 
-        # Create text widget with scrollbar
-        text_frame = ttk.Frame(frame)
-        text_frame.pack(fill=tk.BOTH, expand=True)
+        if self.df is None or self.df.empty:
+            return
 
-        text = tk.Text(text_frame, wrap=tk.WORD, width=60, height=15)
-        scrollbar = ttk.Scrollbar(text_frame, orient="vertical", command=text.yview)
-        text.configure(yscrollcommand=scrollbar.set)
+        # Filter out columns with only empty lists
+        visible_columns = [col for col in self.df.columns if not self.is_empty_list_column(col)]
 
-        text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        # Configure columns
+        self.tree["columns"] = visible_columns
+        self.tree["show"] = "headings"
 
-        # Insert differences
-        text.insert("1.0", detail_message)
-        text.configure(state="disabled")  # Make read-only
+        for column in visible_columns:
+            self.tree.heading(column, text=column)
+            self.tree.column(column, width=100)
 
-        # Add close button
-        ttk.Button(frame, text="Close", command=dialog.destroy).pack(pady=(10, 0))
-
-        # Center the dialog on the screen
-        dialog.geometry("+%d+%d" % (
-            self.root.winfo_rootx() + (self.root.winfo_width() - dialog.winfo_width()) // 2,
-            self.root.winfo_rooty() + (self.root.winfo_height() - dialog.winfo_height()) // 2
-        ))
+        # Add data
+        for idx, row in self.df.iterrows():
+            values = []
+            for col in visible_columns:
+                value = row[col]
+                if isinstance(value, (np.ndarray, list)):
+                    if isinstance(value, np.ndarray):
+                        value = f"[{','.join(map(str, value))}]" if value.size > 0 else '[]'
+                    else:  # list
+                        value = f"[{','.join(map(str, value))}]" if value else '[]'
+                elif pd.api.types.is_integer_dtype(self.df[col].dtype):
+                    try:
+                        value = 0 if pd.isna(value) else int(value)
+                    except (ValueError, TypeError):
+                        value = 0
+                values.append(value)
+            self.tree.insert("", "end", values=values)
 
     def edit_selected(self):
-        """Handle editing of the selected row in the table"""
-        selection = self.table_view.get_selection()
+        selection = self.tree.selection()
         if not selection:
             messagebox.showwarning("Warning", "Please select a row to edit")
             return
 
-        row_idx = selection[0]  # Get the first selected row index
+        idx = self.tree.index(selection[0])
+        visible_columns = [col for col in self.df.columns if not self.is_empty_list_column(col)]
 
-        # Get visible columns (excluding empty columns)
-        visible_columns = [
-            col for col in self.data_manager.df.columns
-            if not self.data_manager.is_empty_column(col)
-        ]
+        dialog = EditDialog(self.root, self.df, idx, visible_columns)
+        self.root.wait_window(dialog)
 
-        # Create edit dialog
-        dialog = EditDialog(
-            self.root,
-            self.data_manager.df,
-            row_idx,
-            visible_columns
+        if dialog.result:
+            for col, value in dialog.result.items():
+                if isinstance(value, list):
+                    print("List value:", value)
+                    if isinstance(self.df.loc[idx, col], np.ndarray):
+                        print(self.df.loc[idx, col])
+                        if self.df.loc[idx, col].size and type(self.df.loc[idx, col][0]) == dict:
+                            value = np.array(value)
+                            for i, item in enumerate(self.df.loc[idx, col]):
+                                self.df.loc[idx, col][i] = value[i]
+                    else:
+                        self.df.loc[idx, col] = value
+                else:
+                    self.df.loc[idx, col] = value
+            self.update_table_view()
+
+    def get_pandas_type(self, pa_type):
+        """Map PyArrow types to pandas dtypes"""
+        import pyarrow as pa
+
+        # Define type mappings
+        type_mapping = {
+            pa.timestamp('ms'): 'datetime64[ms]',
+            pa.int64(): 'int64',
+            pa.int32(): 'int32',
+            pa.float64(): 'float64',
+            pa.float32(): 'float32',
+            pa.string(): 'object',
+            pa.bool_(): 'bool',
+        }
+
+        return type_mapping.get(pa_type, None)
+
+    def open_file(self):
+        filename = filedialog.askopenfilename(
+            filetypes=[("ORC files", "*.orc"), ("All files", "*.*")]
+        )
+        if filename:
+            try:
+                self.current_file = filename
+                orc_file = orc.ORCFile(filename)
+                table = orc_file.read()
+
+                # Store the original schema and metadata
+                self.original_schema = table.schema
+                self.original_metadata = table.schema.metadata
+
+                # First convert to pandas without type mapping
+                self.df = table.to_pandas()
+
+                # Then apply type conversions after the fact
+                for field in table.schema:
+                    if str(field.type) == 'timestamp[ms]' or str(field.type) == 'int64':
+                        if field.name in self.df.columns:
+                            # Fill NaN values with -1 before converting to int64
+                            self.df[field.name] = self.df[field.name].fillna(-1).astype('int64')
+
+                self.update_table_view()
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to open file: {str(e)}")
+
+    def compare_schemas(self, original_schema, saved_schema):
+        """Compare two schemas and return differences"""
+
+        def schema_to_dict(schema):
+            result = {}
+            for field in schema:
+                if isinstance(field.type, pyarrow.ListType):
+                    list_type = field.type
+                    if isinstance(list_type.value_type, pyarrow.StructType):
+                        struct_fields = {}
+                        for struct_field in list_type.value_type:
+                            struct_fields[struct_field.name] = str(struct_field.type)
+                        result[field.name] = {
+                            'type': 'list<struct>',
+                            'struct_fields': struct_fields
+                        }
+                    else:
+                        result[field.name] = f'list<{str(list_type.value_type)}>'
+                else:
+                    result[field.name] = str(field.type)
+            return result
+
+        original_dict = schema_to_dict(original_schema)
+        saved_dict = schema_to_dict(saved_schema)
+
+        differences = []
+        for field in original_dict:
+            if field not in saved_dict:
+                differences.append(f"Missing field in saved schema: {field}")
+            elif original_dict[field] != saved_dict[field]:
+                differences.append(
+                    f"Type mismatch for {field}:\n"
+                    f"  Original: {original_dict[field]}\n"
+                    f"  Saved: {saved_dict[field]}"
+                )
+
+        for field in saved_dict:
+            if field not in original_dict:
+                differences.append(f"Extra field in saved schema: {field}")
+
+        return differences
+
+    def save_file(self):
+        if self.df is None:
+            messagebox.showwarning("Warning", "No data to save")
+            return
+
+        filename = filedialog.asksaveasfilename(
+            defaultextension=".orc",
+            filetypes=[("ORC files", "*.orc"), ("All files", "*.*")]
         )
 
-        self.root.wait_window(dialog)  # Wait for dialog to close
+        if not filename:
+            return
 
-        # If changes were made and confirmed
-        if dialog.result:
-            try:
-                # Update the data in the data manager
-                self.data_manager.update_row(row_idx, dialog.result)
-                # Refresh the table view
-                self.table_view.update_data(self.data_manager.df)
-            except Exception as e:
-                messagebox.showerror("Error", f"Failed to update row: {str(e)}")
+        try:
+            if hasattr(self, 'original_schema'):
+                print("Using original schema for saving:", self.original_schema)
 
-    def _update_row_display(self, row_idx):
-        """Update the display of a specific row in the table
+                # Create table with original schema
+                table = pyarrow.Table.from_pandas(
+                    self.df,
+                    schema=self.original_schema
+                )
 
-        Args:
-            row_idx: Index of the row to update
-        """
-        row_data = self.data_manager.get_row_display_values(row_idx)
-        self.table_view.update_row(row_idx, row_data)
+                # Set metadata if it exists
+                if hasattr(self, 'original_metadata'):
+                    table = table.replace_schema_metadata(self.original_metadata)
+            else:
+                print("Warning: No original schema available, inferring schema from data")
+                table = pyarrow.Table.from_pandas(self.df)
+
+            # Save the file
+            with pyarrow.orc.ORCWriter(filename) as writer:
+                writer.write(table)
+
+            # Validate saved file
+            orc_file = orc.ORCFile(filename)
+            saved_table = orc_file.read()
+            saved_schema = saved_table.schema
+
+            # Compare schemas
+            if hasattr(self, 'original_schema'):
+                differences = self.compare_schemas(self.original_schema, saved_schema)
+                if differences:
+                    mismatch_msg = "Schema differences detected:\n" + "\n".join(differences)
+                    messagebox.showwarning("Schema Mismatch Warning", mismatch_msg)
+
+                    # Print detailed schema information for debugging
+                    print("\nDetailed Schema Information:")
+                    print("Original Schema:")
+                    print(self.original_schema.to_string(show_field_metadata=True))
+                    print("\nSaved Schema:")
+                    print(saved_schema.to_string(show_field_metadata=True))
+                else:
+                    messagebox.showinfo("Success", "File saved successfully with schema preserved")
+            else:
+                messagebox.showinfo("Success", "File saved successfully")
+
+        except Exception as e:
+            import traceback
+            print("Error saving file:", traceback.format_exc())
+            messagebox.showerror("Error", f"Failed to save file: {str(e)}")
+            detail_msg = "Details:\n" + traceback.format_exc()
+            messagebox.showerror("Detailed Error", detail_msg)

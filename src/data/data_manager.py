@@ -234,24 +234,15 @@ class ORCDataManager:
             # Update the row using loc with a dictionary
             for col, value in update_dict.items():
                 if isinstance(value, list):
+                    # Handle lists (including lists of dictionaries)
                     if isinstance(self.df.loc[row_idx, col], np.ndarray):
-                        # Convert list to numpy array if the column is numpy array type
-                        if (self.df.loc[row_idx, col].size > 0 and
-                                isinstance(self.df.loc[row_idx, col][0], dict)):
-                            # Handle list of dictionaries
-                            value = np.array(value)
-                            for i, item in enumerate(value):
-                                if i < len(self.df.loc[row_idx, col]):
-                                    self.df.loc[row_idx, col][i] = item
-                        else:
-                            # Handle regular numpy arrays
-                            self.df.loc[row_idx, col] = np.array(value)
-                    else:
-                        # Handle regular Python lists
-                        self.df.loc[row_idx, col] = value
+                        # If the column is a numpy array, convert the list to a numpy array
+                        value = np.array(value)
+                    # Update the column with the new list or array
+                    self.df.at[row_idx, col] = value
                 else:
                     # Handle scalar values
-                    self.df.loc[row_idx, col] = value
+                    self.df.at[row_idx, col] = value
 
         except Exception as e:
             print(f"Row update error details:")
