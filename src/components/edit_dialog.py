@@ -1,10 +1,12 @@
 import ast
-import json
 import tkinter as tk
 from tkinter import ttk, messagebox
-
-import numpy as np
 import pandas as pd
+import numpy as np
+from typing import Dict, Any, Optional, List
+
+from list_edit_dialog import ListEditDialog
+from src.utils.spark import get_spark_type
 
 
 class EditDialog(tk.Toplevel):
@@ -57,87 +59,9 @@ class EditDialog(tk.Toplevel):
 
             # Get and format value
             value = self.df.iloc[self.row_idx][col]
-
-            # Handle arrays and lists
-            if isinstance(value, (np.ndarray, list)):
-                if isinstance(value, np.ndarray):
-                    entry_value = f"[{','.join(map(str, value.tolist()))}]" if value.size > 0 else "[]"
-                else:  # list
-                    entry_value = f"[{','.join(map(str, value))}]" if value else "[]"
-            else:
-                # Handle scalar values
-                entry_value = str(value) if pd.notna(value) else ""
-
+            entry_value = str(value) if pd.notna(value) else ""
             entry.insert(0, entry_value)
             self.edit_widgets[col] = entry
-
-            # Bind double-click event for complex fields
-            if isinstance(value, (np.ndarray, list, dict)):
-                entry.bind("<Double-1>", lambda e, col=col: self.open_larger_editor(col))
-
-    def open_larger_editor(self, column):
-        """Open a larger editor for complex fields."""
-        # Get the current value from the entry widget
-        current_value = self.edit_widgets[column].get()
-
-        # Pretty-print the value for easier editing
-        try:
-            # Try to parse the value as JSON (for dictionaries)
-            parsed_value = json.loads(current_value)
-            formatted_value = json.dumps(parsed_value, indent=4)
-        except json.JSONDecodeError:
-            # If not JSON, assume it's a list or other complex type
-            try:
-                # Try to evaluate the value as a Python object (e.g., list)
-                parsed_value = ast.literal_eval(current_value)
-                formatted_value = json.dumps(parsed_value, indent=4)
-            except (ValueError, SyntaxError):
-                # Fallback to the original value if parsing fails
-                formatted_value = current_value
-
-        # Create a new window for the larger editor
-        editor_window = tk.Toplevel(self)  # Make it a child of the EditDialog
-        editor_window.title(f"Edit {column}")
-        editor_window.geometry("500x400")
-
-        # Make the new window modal
-        editor_window.transient(self)  # Set as child of the EditDialog
-        editor_window.grab_set()  # Make it modal
-
-        # Create a Text widget for editing
-        editor_text = tk.Text(editor_window, wrap=tk.WORD, width=60, height=20)
-        editor_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-
-        # Insert the formatted value into the Text widget
-        editor_text.insert("1.0", formatted_value)
-
-        # Add Save and Cancel buttons
-        button_frame = ttk.Frame(editor_window)
-        button_frame.pack(fill=tk.X, padx=10, pady=10)
-
-        ttk.Button(
-            button_frame,
-            text="Save",
-            command=lambda: self.save_larger_editor(column, editor_text, editor_window)
-        ).pack(side=tk.LEFT, padx=5)
-
-        ttk.Button(
-            button_frame,
-            text="Cancel",
-            command=editor_window.destroy
-        ).pack(side=tk.LEFT, padx=5)
-
-    def save_larger_editor(self, column, editor_text, editor_window):
-        """Save the changes from the larger editor."""
-        # Get the edited value from the Text widget
-        edited_value = editor_text.get("1.0", tk.END).strip()
-
-        # Update the corresponding entry widget in the EditDialog
-        self.edit_widgets[column].delete(0, tk.END)
-        self.edit_widgets[column].insert(0, edited_value)
-
-        # Close the larger editor window
-        editor_window.destroy()
 
     def _layout_widgets(self):
         """Layout all widgets in the dialog."""
