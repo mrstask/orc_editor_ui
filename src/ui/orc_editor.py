@@ -174,18 +174,17 @@ class ORCEditor:
                             if self.df.loc[idx, col].size and isinstance(self.df.loc[idx, col][0], dict):
                                 # Handle list of dictionaries in a numpy array
                                 value = np.array(value)
-                                for i, item in enumerate(value):
-                                    if i < len(self.df.loc[idx, col]):
-                                        self.df.loc[idx, col][i] = item
+                                # Update the entire array at once
+                                self.df.at[idx, col] = value
                             else:
                                 # Handle regular numpy arrays
-                                self.df.loc[idx, col] = value
+                                self.df.at[idx, col] = value
                         else:
                             # Handle regular Python lists
-                            self.df.loc[idx, col] = value
+                            self.df.at[idx, col] = value
                     else:
                         # Handle scalar values (e.g., strings, integers, dictionaries)
-                        self.df.loc[idx, col] = value
+                        self.df.at[idx, col] = value
 
                 # Refresh the table view to reflect the changes
                 self.update_table_view()
