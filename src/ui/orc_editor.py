@@ -6,7 +6,7 @@ import pandas as pd
 import pyarrow
 import pyarrow.orc as orc
 
-from edit_dialog import EditDialog
+from src.components.edit_dialog import EditDialog
 
 
 class ORCEditor:
@@ -37,9 +37,23 @@ class ORCEditor:
         button_frame = ttk.Frame(parent)
         button_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
 
+        # Add standard buttons
         ttk.Button(button_frame, text="Open ORC", command=self.open_file).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="Save ORC", command=self.save_file).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="Edit Row", command=self.edit_selected).pack(side=tk.LEFT, padx=5)
+
+        # Add a toggle button for empty columns
+        self.show_empty_columns = False  # Default: hide empty columns
+        ttk.Button(
+            button_frame,
+            text="Toggle Empty Columns",
+            command=self.toggle_empty_columns
+        ).pack(side=tk.LEFT, padx=5)
+
+    def toggle_empty_columns(self):
+        """Toggle the visibility of empty columns."""
+        self.show_empty_columns = not self.show_empty_columns  # Toggle the state
+        self.update_table_view()  # Refresh the table view
 
     def create_table_view(self, parent):
         # Create frame for the table and scrollbars
@@ -79,7 +93,10 @@ class ORCEditor:
                              lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
 
     def is_empty_list_column(self, column):
-        """Check if a column contains only empty lists/arrays."""
+        """Check if a column contains only empty lists/arrays or NaN values."""
+        if column not in self.df.columns:
+            return True
+
         for value in self.df[column]:
             if isinstance(value, (np.ndarray, list)):
                 if isinstance(value, np.ndarray) and value.size > 0:
@@ -98,8 +115,13 @@ class ORCEditor:
         if self.df is None or self.df.empty:
             return
 
-        # Filter out columns with only empty lists
-        visible_columns = [col for col in self.df.columns if not self.is_empty_list_column(col)]
+        # Determine visible columns based on the toggle state
+        if self.show_empty_columns:
+            # Show all columns
+            visible_columns = list(self.df.columns)
+        else:
+            # Hide empty columns
+            visible_columns = [col for col in self.df.columns if not self.is_empty_list_column(col)]
 
         # Configure columns
         self.tree["columns"] = visible_columns
@@ -124,7 +146,7 @@ class ORCEditor:
                         value = 0 if pd.isna(value) else int(value)
                     except (ValueError, TypeError):
                         value = 0
-                values.append(value)
+                values.append(str(value))
             self.tree.insert("", "end", values=values)
 
     def edit_selected(self):
@@ -133,27 +155,48 @@ class ORCEditor:
             messagebox.showwarning("Warning", "Please select a row to edit")
             return
 
-        idx = self.tree.index(selection[0])
+        idx = self.tree.index(selection[0])  # Get the index of the selected row
         visible_columns = [col for col in self.df.columns if not self.is_empty_list_column(col)]
 
+        # Open the EditDialog
         dialog = EditDialog(self.root, self.df, idx, visible_columns)
-        self.root.wait_window(dialog)
+        self.root.wait_window(dialog)  # Wait for the dialog to close
 
+        # If changes were made and confirmed
         if dialog.result:
-            for col, value in dialog.result.items():
-                if isinstance(value, list):
-                    print("List value:", value)
-                    if isinstance(self.df.loc[idx, col], np.ndarray):
-                        print(self.df.loc[idx, col])
-                        if self.df.loc[idx, col].size and type(self.df.loc[idx, col][0]) == dict:
-                            value = np.array(value)
-                            for i, item in enumerate(self.df.loc[idx, col]):
-                                self.df.loc[idx, col][i] = value[i]
+            try:
+                # Update the DataFrame with the new values
+                for col, value in dialog.result.items():
+                    if isinstance(value, list):
+                        print("List value:", value)
+                        if isinstance(self.df.loc[idx, col], np.ndarray):
+                            print("Existing value in DataFrame (numpy array):", self.df.loc[idx, col])
+                            if self.df.loc[idx, col].size and isinstance(self.df.loc[idx, col][0], dict):
+                                # Handle list of dictionaries in a numpy array
+                                value = np.array(value)
+                                # Update the entire array at once
+                                self.df.at[idx, col] = value
+                            else:
+                                # Handle regular numpy arrays
+                                self.df.at[idx, col] = value
+                        else:
+                            # Handle regular Python lists
+                            self.df.at[idx, col] = value
                     else:
-                        self.df.loc[idx, col] = value
-                else:
-                    self.df.loc[idx, col] = value
-            self.update_table_view()
+                        # Handle scalar values (e.g., strings, integers, dictionaries)
+                        self.df.at[idx, col] = value
+
+                # Refresh the table view to reflect the changes
+                self.update_table_view()
+
+                # Debugging: Print the updated row
+                print("Updated row:", self.df.iloc[idx])
+
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to update row: {str(e)}")
+                print("Error updating row:", e)
+                print(f"Column: {col}, Value: {value}, Type: {type(value)}")
+                print(f"Existing value in DataFrame: {self.df.loc[idx, col]}, Type: {type(self.df.loc[idx, col])}")
 
     def get_pandas_type(self, pa_type):
         """Map PyArrow types to pandas dtypes"""
@@ -256,6 +299,10 @@ class ORCEditor:
             return
 
         try:
+            # Debug: Print the DataFrame before saving
+            print("DataFrame before saving:")
+            print(self.df.head())
+
             if hasattr(self, 'original_schema'):
                 print("Using original schema for saving:", self.original_schema)
 
@@ -276,10 +323,15 @@ class ORCEditor:
             with pyarrow.orc.ORCWriter(filename) as writer:
                 writer.write(table)
 
-            # Validate saved file
+            # Debug: Print the saved file's schema and data
+            print("Saved file schema:")
             orc_file = orc.ORCFile(filename)
             saved_table = orc_file.read()
             saved_schema = saved_table.schema
+            print(saved_schema.to_string(show_field_metadata=True))
+
+            print("Saved file data:")
+            print(saved_table.to_pandas().head())
 
             # Compare schemas
             if hasattr(self, 'original_schema'):
