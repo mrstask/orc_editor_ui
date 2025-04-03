@@ -6,16 +6,23 @@ import pandas as pd
 import pyarrow
 import pyarrow.orc as orc
 
+from src.components.add_column_dialog import AddColumnDialog
 from src.components.edit_dialog import EditDialog
 
 
 class ORCEditor:
+    # Update the __init__ method in ORCEditor to use ToolbarFrame
+    # Update the __init__ method in the ORCEditor class to initialize show_empty_columns
     def __init__(self, root):
         self.root = root
         self.root.title("ORC File Editor")
         self.current_file = None
         self.df = None
         self.original_schema = None
+        self.original_metadata = None
+
+        # Initialize the show_empty_columns attribute with default value
+        self.show_empty_columns = False  # Default: hide empty columns
 
         # Configure root window to be responsive
         root.grid_rowconfigure(0, weight=1)
@@ -27,12 +34,30 @@ class ORCEditor:
         main_frame.grid_rowconfigure(1, weight=1)
         main_frame.grid_columnconfigure(0, weight=1)
 
-        # File operations buttons
-        self.create_file_buttons(main_frame)
+        # Create toolbar with callbacks
+        callbacks = {
+            "Open ORC": self.open_file,
+            "Save ORC": self.save_file,
+            "Edit Row": self.edit_selected,
+            "Add Column": self.add_column,
+            "toggle_empty_columns": self.toggle_empty_columns
+        }
+
+        from src.components.toolbar_frame import ToolbarFrame
+        toolbar = ToolbarFrame(main_frame, callbacks)
+        toolbar.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        self.toolbar = toolbar
 
         # Create scrollable frame for the table
         self.create_table_view(main_frame)
 
+    # Make sure toggle_empty_columns method is correct
+    def toggle_empty_columns(self):
+        """Toggle the visibility of empty columns."""
+        self.show_empty_columns = not self.show_empty_columns  # Toggle the state
+        self.update_table_view()  # Refresh the table view
+
+    # Replace the create_file_buttons method in ORCEditor class
     def create_file_buttons(self, parent):
         button_frame = ttk.Frame(parent)
         button_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
@@ -41,6 +66,7 @@ class ORCEditor:
         ttk.Button(button_frame, text="Open ORC", command=self.open_file).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="Save ORC", command=self.save_file).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="Edit Row", command=self.edit_selected).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Add Column", command=self.add_column).pack(side=tk.LEFT, padx=5)
 
         # Add a toggle button for empty columns
         self.show_empty_columns = False  # Default: hide empty columns
@@ -49,11 +75,6 @@ class ORCEditor:
             text="Toggle Empty Columns",
             command=self.toggle_empty_columns
         ).pack(side=tk.LEFT, padx=5)
-
-    def toggle_empty_columns(self):
-        """Toggle the visibility of empty columns."""
-        self.show_empty_columns = not self.show_empty_columns  # Toggle the state
-        self.update_table_view()  # Refresh the table view
 
     def create_table_view(self, parent):
         # Create frame for the table and scrollbars
@@ -357,3 +378,59 @@ class ORCEditor:
             messagebox.showerror("Error", f"Failed to save file: {str(e)}")
             detail_msg = "Details:\n" + traceback.format_exc()
             messagebox.showerror("Detailed Error", detail_msg)
+
+    def add_column(self):
+        """Open dialog to add a new column to the dataset."""
+        if self.df is None:
+            messagebox.showwarning("Warning", "Please open an ORC file first")
+            return
+
+        # Create dialog
+        dialog = AddColumnDialog(self.root)
+        self.root.wait_window(dialog)
+
+        # Process result if user confirmed
+        if dialog.result:
+            try:
+                column_name = dialog.result['column_name']
+                data_type = dialog.result['data_type']
+                default_value = dialog.result['default_value']
+
+                # Check if column already exists
+                if column_name in self.df.columns:
+                    messagebox.showerror("Error", f"Column '{column_name}' already exists")
+                    return
+
+                # Add the column to the DataFrame
+                self.df[column_name] = default_value
+
+                # Update schema
+                if hasattr(self, 'original_schema'):
+                    # Import pyarrow and type utils
+                    import pyarrow as pa
+                    from src.utils.type_utils import get_pyarrow_type
+
+                    # Get PyArrow type for the new column
+                    pa_type = get_pyarrow_type(data_type)
+
+                    # Create new field
+                    new_field = pa.field(column_name, pa_type)
+
+                    # Create new schema with the additional field
+                    fields = list(self.original_schema)
+                    fields.append(new_field)
+
+                    # Update original schema
+                    self.original_schema = pa.schema(fields)
+
+                    # Update metadata if it exists
+                    if hasattr(self, 'original_metadata') and self.original_metadata:
+                        self.original_schema = self.original_schema.with_metadata(self.original_metadata)
+
+                # Update table view
+                self.update_table_view()
+
+                messagebox.showinfo("Success", f"Added new column: {column_name}")
+
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to add column: {str(e)}")

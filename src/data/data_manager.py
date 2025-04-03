@@ -21,6 +21,46 @@ class ORCDataManager:
         self.original_schema = None
         self.original_metadata = None
 
+    def add_column(self, column_name: str, data_type: str, default_value: Any) -> None:
+        """Add a new column to the DataFrame.
+
+        Args:
+            column_name: Name of the new column
+            data_type: Data type of the new column
+            default_value: Default value for the new column
+        """
+        if self.df is None:
+            raise ValueError("No data loaded")
+
+        # Check if column already exists
+        if column_name in self.df.columns:
+            raise ValueError(f"Column '{column_name}' already exists")
+
+        # Add column with default value
+        self.df[column_name] = default_value
+
+        # Update schema if needed
+        if self.original_schema is not None:
+            import pyarrow as pa
+            from src.utils.type_utils import get_pyarrow_type
+
+            # Get PyArrow type for the new column
+            pa_type = get_pyarrow_type(data_type)
+
+            # Create new field
+            new_field = pa.field(column_name, pa_type)
+
+            # Create new schema with the additional field
+            fields = list(self.original_schema)
+            fields.append(new_field)
+
+            # Update original schema
+            self.original_schema = pa.schema(fields)
+
+            # Update metadata if it exists
+            if hasattr(self, 'original_metadata') and self.original_metadata:
+                self.original_schema = self.original_schema.with_metadata(self.original_metadata)
+
     def load_file(self, filename: str) -> bool:
         """Load and parse an ORC file.
 
